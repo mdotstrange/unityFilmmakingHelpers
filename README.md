@@ -14,3 +14,5 @@ window into an animation field.
 [Useage example video](https://capture.dropbox.com/cMXIOgomEUaZFGPj)
 
 ** add this animation autoplay script to your project for anim autoplay https://github.com/KuroiRoy/UnityAnimationPreviewAutoplay/tree/main
+
+# I'll clean up/document the other scripts soon- they are from the M doll interactive release https://store.steampowered.com/app/2105250/M_doll/
