@@ -13,4 +13,4 @@ It takes a long time to load this window the first time as its indexing all your
 Use this window to search and preview your humanoid animations- when you've found the one you want you can drag/drop it from this
 window into an animation field.
 
-[Useage example]
+[Useage example video](https://capture.dropbox.com/cMXIOgomEUaZFGPj)
