@@ -45,10 +45,10 @@ public class HumanoidAnimationWindow : EditorWindow
 
     private void OnGUI()
     {
-        if (GUILayout.Button("Refresh"))
-        {
-            RefreshAnimations();
-        }
+        //if (GUILayout.Button("Refresh"))
+        //{
+        //    RefreshAnimations();
+        //}
 
         // Search field to filter animations by name.
         EditorGUILayout.BeginHorizontal();
@@ -107,5 +107,16 @@ public class HumanoidAnimationWindow : EditorWindow
             }
         }
         EditorGUILayout.EndScrollView();
+
+        // Push the Refresh button to the bottom.
+        GUILayout.FlexibleSpace();
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.FlexibleSpace();
+        if (GUILayout.Button("Refresh", GUILayout.Width(position.width * 0.5f)))
+        {
+            RefreshAnimations();
+        }
+        GUILayout.FlexibleSpace();
+        EditorGUILayout.EndHorizontal();
     }
 }
