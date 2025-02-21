@@ -10,10 +10,6 @@ public class HumanoidAnimationWindow : EditorWindow
 
     private AnimationClip selectedClip;
 
-    // Add this near the other private fields
-    private int selectedIndex = -1;
-
-
     // A small helper class to cache information about each clip.
     private class AnimationClipInfo
     {
@@ -120,6 +116,8 @@ public class HumanoidAnimationWindow : EditorWindow
         }
     }
 
+
+
     private void OnGUI()
     {
         EditorGUILayout.BeginHorizontal();
@@ -134,117 +132,52 @@ public class HumanoidAnimationWindow : EditorWindow
             ApplySearchFilter();
         }
 
-        scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
+        // Arrow-key handling
 
+        HandleKeyboardInput();
+
+        scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
 
         if (filteredClips != null)
         {
-
-
-            // Check for arrow key presses to move selection up/down
-            Event e = Event.current;
-            if (e.type == EventType.KeyDown && filteredClips.Count > 0)
+            foreach (var clipInfo in filteredClips)
             {
-                if (e.keyCode == KeyCode.DownArrow)
-                {
-                    selectedIndex++;
-                    if (selectedIndex >= filteredClips.Count)
-                        selectedIndex = 0;
-
-                    // Update selectedClip to match the new index
-                    selectedClip = filteredClips[selectedIndex].clip;
-                    Selection.activeObject = selectedClip;
-                    EditorGUIUtility.PingObject(selectedClip);
-
-                    e.Use(); // Consume the event
-                }
-                else if (e.keyCode == KeyCode.UpArrow)
-                {
-                    selectedIndex--;
-                    if (selectedIndex < 0)
-                        selectedIndex = filteredClips.Count - 1;
-
-                    // Update selectedClip to match the new index
-                    selectedClip = filteredClips[selectedIndex].clip;
-                    Selection.activeObject = selectedClip;
-                    EditorGUIUtility.PingObject(selectedClip);
-
-                    e.Use(); // Consume the event
-                }
-            }
-
-
-
-
-
-            for (int i = 0; i < filteredClips.Count; i++)
-            {
-                var clipInfo = filteredClips[i];
-
                 // Reserve a rect for a single row
                 Rect lineRect = EditorGUILayout.GetControlRect(GUILayout.Height(EditorGUIUtility.singleLineHeight));
                 float buttonWidth = 60f;
                 Rect objectFieldRect = new Rect(lineRect.x, lineRect.y, lineRect.width - buttonWidth, lineRect.height);
                 Rect buttonRect = new Rect(lineRect.x + lineRect.width - buttonWidth, lineRect.y, buttonWidth, lineRect.height);
 
-
-                // If this clip matches the selected index, highlight it
-                bool isSelected = (i == selectedIndex);
-                if (isSelected)
+                // Draw highlight behind the row if it's selected
+                if (selectedClip == clipInfo.clip)
                 {
                     Color oldColor = GUI.color;
-                    GUI.color = new Color(1f, 1f, 0f, 0.2f);
+                    GUI.color = new Color(1f, 1f, 0f, 0.2f); // semi-transparent yellow
                     GUI.Box(lineRect, GUIContent.none);
                     GUI.color = oldColor;
-
-                    // Optional: draw thick yellow borders or any custom highlight as before
-                    // (omitted here for brevity)
-
-                    // If user clicks on this row (or the "Select" button), update the index & selectedClip
-                    if (Event.current.type == EventType.MouseDown && lineRect.Contains(Event.current.mousePosition))
-                    {
-                        selectedIndex = i;
-                        selectedClip = clipInfo.clip;
-                        Selection.activeObject = selectedClip;
-                        EditorGUIUtility.PingObject(selectedClip);
-                    }
-
-
-                    // Highlight the currently selected clip.
-                    if (selectedClip == clipInfo.clip)
-                    {
-                        Color highlightColor = Color.yellow;
-                        float thickness = 20f;
-                        // Draw borders around the row.
-                        EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor);           // Top
-                        EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y + lineRect.height - thickness, lineRect.width, thickness), highlightColor); // Bottom
-                        EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, thickness, lineRect.height), highlightColor);           // Left
-                        EditorGUI.DrawRect(new Rect(lineRect.x + lineRect.width - thickness, lineRect.y, thickness, lineRect.height), highlightColor);  // Right
-                    }
                 }
 
 
-               
-
-
-
+                // Highlight the currently selected clip.
+                if (selectedClip == clipInfo.clip)
+                {
+                    Color highlightColor = Color.yellow;
+                    float thickness = 20f;
+                    // Draw borders around the row.
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor);           // Top
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y + lineRect.height - thickness, lineRect.width, thickness), highlightColor); // Bottom
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, thickness, lineRect.height), highlightColor);           // Left
+                    EditorGUI.DrawRect(new Rect(lineRect.x + lineRect.width - thickness, lineRect.y, thickness, lineRect.height), highlightColor);  // Right
+                }
 
                 // Draw the clip in a read-only object field
                 EditorGUI.ObjectField(objectFieldRect, clipInfo.clip, typeof(AnimationClip), false);
 
-                // "Select" button
+                // "Select" button now actively selects the clip in the Project & Inspector
                 if (GUI.Button(buttonRect, "Select"))
                 {
-                    selectedIndex = i;
-                    selectedClip = clipInfo.clip;
-                    Selection.activeObject = selectedClip;
-                    EditorGUIUtility.PingObject(selectedClip);
-                    Debug.Log(clipInfo.clip.name + " with path: " + clipInfo.assetPath);
+                    SelectClip(clipInfo);
                 }
-
-
-
-
 
                 // Optional drag-and-drop support
                 if (Event.current.type == EventType.MouseDrag && objectFieldRect.Contains(Event.current.mousePosition))
@@ -261,7 +194,8 @@ public class HumanoidAnimationWindow : EditorWindow
         GUILayout.FlexibleSpace();
         EditorGUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
-        if (GUILayout.Button("Refresh", GUILayout.Width(position.width * 0.5f)))
+
+        if (GUILayout.Button("Refresh", GUILayout.Width(position.width * 0.15f)))
         {
             cachedClips = null;
             RefreshAnimations();
@@ -269,5 +203,75 @@ public class HumanoidAnimationWindow : EditorWindow
         }
         GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void HandleKeyboardInput()
+
+    {
+
+        Event e = Event.current;
+
+        if (e.type == EventType.KeyDown)
+
+        {
+
+            if (filteredClips.Count == 0) return;
+
+
+
+            int currentIndex = filteredClips.FindIndex(info => info.clip == selectedClip);
+
+
+
+            if (e.keyCode == KeyCode.UpArrow)
+
+            {
+
+                e.Use();
+
+                // If nothing is selected, or index is -1, select the first item when pressing Up.
+
+                currentIndex = (currentIndex < 0) ? 0 : currentIndex - 1;
+
+                if (currentIndex < 0) currentIndex = 0;
+
+                SelectClip(filteredClips[currentIndex]);
+
+            }
+
+            else if (e.keyCode == KeyCode.DownArrow)
+
+            {
+
+                e.Use();
+
+                // If nothing is selected, or index is -1, select the first item when pressing Down.
+
+                currentIndex = (currentIndex < 0) ? 0 : currentIndex + 1;
+
+                if (currentIndex >= filteredClips.Count) currentIndex = filteredClips.Count - 1;
+
+                SelectClip(filteredClips[currentIndex]);
+
+            }
+
+        }
+
+    }
+
+
+
+    private void SelectClip(AnimationClipInfo clipInfo)
+
+    {
+
+        selectedClip = clipInfo.clip;
+
+        Selection.activeObject = clipInfo.clip;
+
+        EditorGUIUtility.PingObject(clipInfo.clip);
+
+        Debug.Log(clipInfo.clip.name + " with path: " + clipInfo.assetPath);
+
     }
 }
