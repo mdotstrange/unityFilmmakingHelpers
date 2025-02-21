@@ -130,6 +130,12 @@ public class HumanoidAnimationWindow : EditorWindow
         {
             searchQuery = newQuery;
             ApplySearchFilter();
+
+            // NEW: auto-select first clip if any results exist
+            if (filteredClips.Count > 0)
+            {
+                SelectClip(filteredClips[0]);
+            }
         }
 
         // Arrow-key handling
