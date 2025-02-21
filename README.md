@@ -11,8 +11,6 @@ It takes a long time to load this window the first time as its indexing all your
 Use this window to search and preview your humanoid animations- when you've found the one you want you can drag/drop it from this
 window into an animation field.
 
-[Useage example video](https://capture.dropbox.com/cMXIOgomEUaZFGPj)
-
 ** add this animation autoplay script to your project for anim autoplay https://github.com/KuroiRoy/UnityAnimationPreviewAutoplay/tree/main
 
 -----------------------------------------------------------------
