@@ -3,6 +3,8 @@ Small scripts/tools I use to help me make films in Unity
 ---------------------------------------------------------------
 # HumanoidAnimationWindow
 
+![Screenshot](amw.png)
+
 When working with a ton of humanoid animations the Unity workflow is slow and annoying. I've made feature requests for an animation
 preview inside the animationClip selection window for years to no avail. This is the next best thing.
 
