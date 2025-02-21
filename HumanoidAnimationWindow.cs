@@ -1,26 +1,27 @@
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 public class HumanoidAnimationWindow : EditorWindow
 {
     private Vector2 scrollPos;
     private string searchQuery = "";
-    private string lastSearchQuery = "";
-
     private AnimationClip selectedClip;
 
     // A small helper class to cache information about each clip.
     private class AnimationClipInfo
     {
         public AnimationClip clip;
-        public string normalizedName; // Lower-case, underscores replaced with spaces.
+        public string nameNormalized; // Lower-case, underscores replaced, etc.
+        public string pathNormalized; // Also lower-case, etc.
         public string assetPath;
 
-        public AnimationClipInfo(AnimationClip clip, string normalizedName, string assetPath)
+        public AnimationClipInfo(AnimationClip clip, string normalizedName, string normalizedPath, string assetPath)
         {
             this.clip = clip;
-            this.normalizedName = normalizedName;
+            this.nameNormalized = normalizedName;
+            this.pathNormalized = normalizedPath;
             this.assetPath = assetPath;
         }
     }
@@ -60,7 +61,8 @@ public class HumanoidAnimationWindow : EditorWindow
     // Force a (re)scan of humanoid clips in the project.
     private void RefreshAnimations()
     {
-        if (cachedClips != null) return; // Only rebuild if needed
+        // Only rebuild if needed
+        if (cachedClips != null) return;
 
         cachedClips = new List<AnimationClipInfo>();
         string[] guids = AssetDatabase.FindAssets("t:AnimationClip");
@@ -70,20 +72,49 @@ public class HumanoidAnimationWindow : EditorWindow
             AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
             if (clip != null)
             {
-                // Check if it's a humanoid clip
+                // Try to get the importer for this asset
                 var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+
+                // If it's an FBX (or similar) with humanoid rig
                 if (importer != null && importer.animationType == ModelImporterAnimationType.Human)
                 {
-                    string normalizedName = clip.name.ToLower().Replace("_", " ");
-                    cachedClips.Add(new AnimationClipInfo(clip, normalizedName, assetPath));
+                    AddToCache(clip, assetPath);
+                }
+                else
+                {
+                    // If it's a .anim or something else, we can check if the clip is actually humanoid via isHumanMotion
+                    // Note: isHumanMotion == true if the clip drives a humanoid rig (i.e., has muscle curves, etc.)
+                    // This should also return .anim files that are humanoid.
+                    if (clip.isHumanMotion)
+                    {
+                        AddToCache(clip, assetPath);
+                    }
                 }
             }
         }
     }
 
-    // Only re-filter when the search query changes or when the cache is invalidated
+    private void AddToCache(AnimationClip clip, string assetPath)
+    {
+        // Normalize the clip name and path by lowercasing and converting underscores/hyphens/slashes to spaces
+        string nameLower = clip.name.ToLower();
+        string pathLower = assetPath.ToLower();
+
+        nameLower = Regex.Replace(nameLower, @"[_\-]+", " ");
+        pathLower = Regex.Replace(pathLower, @"[\\/_\-]+", " ");
+
+        cachedClips.Add(new AnimationClipInfo(
+            clip,
+            nameLower,
+            pathLower,
+            assetPath
+        ));
+    }
+
+    // Only re-filter when needed
     private void ApplySearchFilter()
     {
+        // If the cache is invalid or doesn't exist, clear
         if (cachedClips == null)
         {
             filteredClips.Clear();
@@ -97,26 +128,63 @@ public class HumanoidAnimationWindow : EditorWindow
             return;
         }
 
-        // Preprocess the search query
-        string[] terms = searchQuery.ToLower().Split(new char[] { ' ' }, System.StringSplitOptions.RemoveEmptyEntries);
+        // Normalize the search query: ignore case, treat underscores/hyphens as spaces
+        string normalizedQuery = searchQuery.ToLower().Trim();
+        normalizedQuery = Regex.Replace(normalizedQuery, @"[_\-]+", " ");
+        normalizedQuery = Regex.Replace(normalizedQuery, @"\s+", " "); // collapse multiple spaces
 
-        filteredClips.Clear();
+        // Split into tokens for AND matching
+        string[] tokens = normalizedQuery.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+
+        List<AnimationClipInfo> matches = new List<AnimationClipInfo>();
+        List<AnimationClipInfo> exactMatches = new List<AnimationClipInfo>();
+
+        // Evaluate each cached humanoid clip
         foreach (var clipInfo in cachedClips)
         {
-            bool allMatch = true;
-            foreach (string term in terms)
+            bool allTokensMatch = true;
+
+            // For each token, check if it appears in EITHER the normalized clip name or the normalized path
+            foreach (string token in tokens)
             {
-                if (!clipInfo.normalizedName.Contains(term))
+                if (!clipInfo.nameNormalized.Contains(token) && 
+                    !clipInfo.pathNormalized.Contains(token))
                 {
-                    allMatch = false;
+                    allTokensMatch = false;
                     break;
                 }
             }
-            if (allMatch) filteredClips.Add(clipInfo);
+
+            if (!allTokensMatch) continue;
+
+            // If it matches, add to 'matches'
+            matches.Add(clipInfo);
+
+            // Check exact match: if the entire normalized name == the entire normalized query
+            if (clipInfo.nameNormalized == normalizedQuery)
+            {
+                exactMatches.Add(clipInfo);
+            }
         }
+
+        // Sort results: exact matches first
+        List<AnimationClipInfo> sortedResults = new List<AnimationClipInfo>();
+
+        // Sort the exact matches (alphabetically if you wish)
+        exactMatches.Sort((a, b) => string.Compare(a.clip.name, b.clip.name, System.StringComparison.OrdinalIgnoreCase));
+        sortedResults.AddRange(exactMatches);
+
+        // Now add the partial matches
+        foreach (var m in matches)
+        {
+            if (!exactMatches.Contains(m))
+            {
+                sortedResults.Add(m);
+            }
+        }
+
+        filteredClips = sortedResults;
     }
-
-
 
     private void OnGUI()
     {
@@ -131,19 +199,16 @@ public class HumanoidAnimationWindow : EditorWindow
             searchQuery = newQuery;
             ApplySearchFilter();
 
-            // NEW: auto-select first clip if any results exist
+            // Auto-select first clip if any results exist
             if (filteredClips.Count > 0)
             {
                 SelectClip(filteredClips[0]);
             }
         }
 
-        // Arrow-key handling
-
         HandleKeyboardInput();
 
         scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
-
         if (filteredClips != null)
         {
             foreach (var clipInfo in filteredClips)
@@ -158,34 +223,32 @@ public class HumanoidAnimationWindow : EditorWindow
                 if (selectedClip == clipInfo.clip)
                 {
                     Color oldColor = GUI.color;
-                    GUI.color = new Color(1f, 1f, 0f, 0.2f); // semi-transparent yellow
+                    GUI.color = new Color(1f, 1f, 0f, 0.2f);
                     GUI.Box(lineRect, GUIContent.none);
                     GUI.color = oldColor;
                 }
 
-
-                // Highlight the currently selected clip.
+                // Highlight the currently selected clip with a border
                 if (selectedClip == clipInfo.clip)
                 {
                     Color highlightColor = Color.yellow;
                     float thickness = 20f;
-                    // Draw borders around the row.
-                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor);           // Top
-                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y + lineRect.height - thickness, lineRect.width, thickness), highlightColor); // Bottom
-                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, thickness, lineRect.height), highlightColor);           // Left
-                    EditorGUI.DrawRect(new Rect(lineRect.x + lineRect.width - thickness, lineRect.y, thickness, lineRect.height), highlightColor);  // Right
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor); 
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y + lineRect.height - thickness, lineRect.width, thickness), highlightColor);
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, thickness, lineRect.height), highlightColor);
+                    EditorGUI.DrawRect(new Rect(lineRect.x + lineRect.width - thickness, lineRect.y, thickness, lineRect.height), highlightColor);
                 }
 
                 // Draw the clip in a read-only object field
                 EditorGUI.ObjectField(objectFieldRect, clipInfo.clip, typeof(AnimationClip), false);
 
-                // "Select" button now actively selects the clip in the Project & Inspector
+                // "Select" button
                 if (GUI.Button(buttonRect, "Select"))
                 {
                     SelectClip(clipInfo);
                 }
 
-                // Optional drag-and-drop support
+                // Drag-and-drop support
                 if (Event.current.type == EventType.MouseDrag && objectFieldRect.Contains(Event.current.mousePosition))
                 {
                     DragAndDrop.PrepareStartDrag();
@@ -212,72 +275,35 @@ public class HumanoidAnimationWindow : EditorWindow
     }
 
     private void HandleKeyboardInput()
-
     {
-
         Event e = Event.current;
-
         if (e.type == EventType.KeyDown)
-
         {
-
             if (filteredClips.Count == 0) return;
 
-
-
             int currentIndex = filteredClips.FindIndex(info => info.clip == selectedClip);
-
-
-
             if (e.keyCode == KeyCode.UpArrow)
-
             {
-
                 e.Use();
-
-                // If nothing is selected, or index is -1, select the first item when pressing Up.
-
                 currentIndex = (currentIndex < 0) ? 0 : currentIndex - 1;
-
                 if (currentIndex < 0) currentIndex = 0;
-
                 SelectClip(filteredClips[currentIndex]);
-
             }
-
             else if (e.keyCode == KeyCode.DownArrow)
-
             {
-
                 e.Use();
-
-                // If nothing is selected, or index is -1, select the first item when pressing Down.
-
                 currentIndex = (currentIndex < 0) ? 0 : currentIndex + 1;
-
                 if (currentIndex >= filteredClips.Count) currentIndex = filteredClips.Count - 1;
-
                 SelectClip(filteredClips[currentIndex]);
-
             }
-
         }
-
     }
 
-
-
     private void SelectClip(AnimationClipInfo clipInfo)
-
     {
-
         selectedClip = clipInfo.clip;
-
         Selection.activeObject = clipInfo.clip;
-
         EditorGUIUtility.PingObject(clipInfo.clip);
-
         Debug.Log(clipInfo.clip.name + " with path: " + clipInfo.assetPath);
-
     }
 }
