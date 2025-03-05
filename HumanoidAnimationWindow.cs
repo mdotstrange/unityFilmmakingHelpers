@@ -34,7 +34,8 @@ public class HumanoidAnimationWindow : EditorWindow
         public string pathNormalized;
         public string assetPath;
         public bool isFavorite; // Track favorite status
-        
+        public bool isHidden; // Track hidden status
+
         [System.NonSerialized]
         public AnimationClip clip;
         
@@ -54,8 +55,17 @@ public class HumanoidAnimationWindow : EditorWindow
             this.isLoaded = false;
             this.isLoading = false;
             this.isFavorite = false;
+            this.isHidden = false;
         }
-        
+
+     
+
+       
+
+  
+
+     
+
         public bool LoadClip()
         {
             if (isLoaded && clip != null)
@@ -180,6 +190,7 @@ public class HumanoidAnimationWindow : EditorWindow
         {
             ApplySearchFilter();
             LoadFavorites(); // Load favorites after cache is loaded
+            LoadHiddenItems(); // Load hidden items after cache is loaded
         }
     }
     
@@ -239,7 +250,10 @@ public class HumanoidAnimationWindow : EditorWindow
     
     // Path for favorites
     private string FavoritesFilePath => Path.Combine(Application.dataPath, "../Library/HumanoidAnimationsFavorites.json");
-    
+
+    // Add a new field for showing hidden animations:
+    private bool showHiddenItems = false; // For hidden items toggle
+
     // Save favorites to disk
     private void SaveFavorites()
     {
@@ -318,7 +332,88 @@ public class HumanoidAnimationWindow : EditorWindow
             Debug.LogError($"Error loading favorites: {e.Message}");
         }
     }
-    
+
+    // Add path for hidden animations:
+    private string HiddenFilePath => Path.Combine(Application.dataPath, "../Library/HumanoidAnimationsHidden.json");
+
+    // Add method to load hidden animations:
+    private void LoadHiddenItems()
+    {
+        try
+        {
+            if (!File.Exists(HiddenFilePath) || cachedClips == null)
+                return;
+
+            string json = File.ReadAllText(HiddenFilePath);
+
+            // Parse manually (using simple string operations for robustness)
+            HashSet<string> hiddenGuids = new HashSet<string>();
+
+            // Extract guids using regex for simplicity
+            Regex guidRegex = new Regex("\"guid\":\"([^\"]+)\"");
+            MatchCollection matches = guidRegex.Matches(json);
+
+            foreach (Match match in matches)
+            {
+                if (match.Groups.Count > 1)
+                {
+                    hiddenGuids.Add(match.Groups[1].Value);
+                }
+            }
+
+            // Apply hidden status to cached clips
+            foreach (var clip in cachedClips)
+            {
+                clip.isHidden = hiddenGuids.Contains(clip.guid);
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Error loading hidden items: {e.Message}");
+        }
+    }
+
+    private void SaveHiddenItems()
+    {
+        try
+        {
+            if (cachedClips == null)
+                return;
+
+            // Create a dictionary of GUIDs to hidden status
+            Dictionary<string, bool> hiddenItems = new Dictionary<string, bool>();
+
+            foreach (var clip in cachedClips)
+            {
+                if (clip.isHidden)
+                {
+                    hiddenItems[clip.guid] = true;
+                }
+            }
+
+            // Serialize to JSON (manually since Dictionary isn't directly serializable)
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append("{\"hidden\":[");
+
+            bool first = true;
+            foreach (var kvp in hiddenItems)
+            {
+                if (!first) sb.Append(",");
+                sb.Append("{\"guid\":\"").Append(kvp.Key).Append("\"}");
+                first = false;
+            }
+
+            sb.Append("]}");
+
+            // Write to disk
+            File.WriteAllText(HiddenFilePath, sb.ToString());
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Error saving hidden items: {e.Message}");
+        }
+    }
+
     private void BuildCache(bool forceRebuild = false)
     {
         // Only rebuild if needed
@@ -565,8 +660,14 @@ public class HumanoidAnimationWindow : EditorWindow
         }
         else
         {
-            // Show all clips
-            baseList = cachedClips;
+            // Show all clips (except hidden unless showHiddenItems is true)
+            foreach (var clip in cachedClips)
+            {
+                if (!clip.isHidden || showHiddenItems)
+                {
+                    baseList.Add(clip);
+                }
+            }
         }
         
         // If no search, show the base list
@@ -773,22 +874,39 @@ public class HumanoidAnimationWindow : EditorWindow
     {
         // Search bar with favorites toggle
         EditorGUILayout.BeginHorizontal();
-        
-        // Search field
+
+
+        // Search field - reduced to half size
         EditorGUILayout.LabelField("Search:", GUILayout.Width(50));
-        string newQuery = EditorGUILayout.TextField(searchQuery);
-        
+        float searchFieldWidth = (position.width - 50 - 80 - 80 - 80) / 2; // 50 for label, 80 for clear, 80 for favorites, 80 for unhide
+        string newQuery = EditorGUILayout.TextField(searchQuery, GUILayout.Width(searchFieldWidth));
+
+        // Clear button
+        if (GUILayout.Button("Clear", GUILayout.Width(80)))
+        {
+            // Clear the search text
+            newQuery = "";
+            // Make search field lose focus
+            GUI.FocusControl(null);
+            // The search filter will be applied below when it detects newQuery != searchQuery
+        }
+
         // Favorites toggle
-        GUIContent toggleContent = new GUIContent("Favorites", "Show only favorite animations");
-        bool newShowOnlyFavorites = GUILayout.Toggle(showOnlyFavorites, toggleContent, "Button", GUILayout.Width(80));
-        
+        GUIContent favoritesContent = new GUIContent("Favorites", "Show only favorite animations");
+        bool newShowOnlyFavorites = GUILayout.Toggle(showOnlyFavorites, favoritesContent, "Button", GUILayout.Width(80));
+
+        // Unhide toggle
+        GUIContent unhideContent = new GUIContent("Unhide", "Show hidden animations");
+        bool newShowHiddenItems = GUILayout.Toggle(showHiddenItems, unhideContent, "Button", GUILayout.Width(80));
+
         EditorGUILayout.EndHorizontal();
-        
+
         // Apply filter if search or favorites toggle changes
-        if (newQuery != searchQuery || newShowOnlyFavorites != showOnlyFavorites)
+        if (newQuery != searchQuery || newShowOnlyFavorites != showOnlyFavorites || newShowHiddenItems != showHiddenItems)
         {
             searchQuery = newQuery;
             showOnlyFavorites = newShowOnlyFavorites;
+            showHiddenItems = newShowHiddenItems;
             ApplySearchFilter();
             
             // Auto-select first result
@@ -864,7 +982,7 @@ public class HumanoidAnimationWindow : EditorWindow
         GUILayout.FlexibleSpace();
         
         // Memory cleanup button
-        if (GUILayout.Button("Clear Memory", GUILayout.Width(position.width * 0.15f)))
+        if (GUILayout.Button("Clear Memory", GUILayout.Width(position.width * 0.3f)))
         {
             // Unload all non-selected clips
             foreach (var clipInfo in filteredClips)
@@ -901,36 +1019,48 @@ public class HumanoidAnimationWindow : EditorWindow
         
         EditorGUILayout.EndHorizontal();
     }
-    
+
     private void DrawClipItem(int index, Rect itemRect)
     {
         if (index < 0 || index >= filteredClips.Count)
             return;
-            
+
         var clipInfo = filteredClips[index];
         bool isSelected = false;
-        
+
         // Check if this item is selected before loading
         if (selectedClip != null && clipInfo.isLoaded && clipInfo.clip == selectedClip)
         {
             isSelected = true;
         }
-        
+
         // Try to load clip (but don't force it)
         bool isLoaded = clipInfo.LoadClip();
         AnimationClip clip = clipInfo.clip;
 
+        // Define dimensions for controls
+        float iconWidth = 20f;
+        float spacing = 5f;
+        float buttonWidth = 120f; // Wider select button
 
-        
-        // Define dimensions for controls - moved up before use
-        float starWidth = 20f;
-        float buttonWidth = 120f; // Wider select button (2x)
-        float objectFieldWidth = itemRect.width - buttonWidth - starWidth - 10; // Half width for clip field
+        // Calculate positions for all elements
+        float currentX = itemRect.x;
 
-        // Define rects for controls - new layout with star button
-        Rect starRect = new Rect(itemRect.x, itemRect.y, starWidth, itemRect.height);
-        Rect objectFieldRect = new Rect(itemRect.x + starWidth + 5, itemRect.y, objectFieldWidth, itemRect.height);
-        Rect buttonRect = new Rect(itemRect.x + starWidth + objectFieldWidth + 10, itemRect.y, buttonWidth, itemRect.height);
+        // Star icon rect
+        Rect starRect = new Rect(currentX, itemRect.y, iconWidth, itemRect.height);
+        currentX += iconWidth + spacing;
+
+        // Hide icon rect
+        Rect hideRect = new Rect(currentX, itemRect.y, iconWidth, itemRect.height);
+        currentX += iconWidth + spacing;
+
+        // Calculate remaining width for object field
+        float objectFieldWidth = itemRect.width - currentX - buttonWidth - spacing;
+        Rect objectFieldRect = new Rect(currentX, itemRect.y, objectFieldWidth, itemRect.height);
+        currentX += objectFieldWidth + spacing;
+
+        // Button rect at the end
+        Rect buttonRect = new Rect(currentX, itemRect.y, buttonWidth, itemRect.height);
 
         // If clip is still loading or failed to load, show a placeholder
         if (!isLoaded || clip == null)
@@ -968,7 +1098,6 @@ public class HumanoidAnimationWindow : EditorWindow
             }
         }
 
-
         // Draw box and selection highlight
         if (isSelected)
         {
@@ -980,14 +1109,10 @@ public class HumanoidAnimationWindow : EditorWindow
                 itemRect.height
             );
 
-     
-            
             // Draw green highlight rectangle across the entire row
             EditorGUI.DrawRect(highlightRect, new Color(0.3f, 0.8f, 0.3f, 0.5f)); // Light green with transparency
         }
-        
-       
-        
+
         // Draw favorite star button
         Color oldColor = GUI.color;
         if (clipInfo.isFavorite)
@@ -998,7 +1123,7 @@ public class HumanoidAnimationWindow : EditorWindow
         {
             GUI.color = new Color(0.6f, 0.6f, 0.6f, 0.7f); // Grey for non-favorites
         }
-        
+
         // Use the star icon from the project
         if (starIcon != null)
         {
@@ -1007,7 +1132,7 @@ public class HumanoidAnimationWindow : EditorWindow
             {
                 clipInfo.isFavorite = !clipInfo.isFavorite;
                 SaveFavorites(); // Save when favorite status changes
-                
+
                 // If we're in favorites-only mode and unfavoriting, reapply filter
                 if (showOnlyFavorites && !clipInfo.isFavorite)
                 {
@@ -1022,7 +1147,7 @@ public class HumanoidAnimationWindow : EditorWindow
             {
                 clipInfo.isFavorite = !clipInfo.isFavorite;
                 SaveFavorites(); // Save when favorite status changes
-                
+
                 // If we're in favorites-only mode and unfavoriting, reapply filter
                 if (showOnlyFavorites && !clipInfo.isFavorite)
                 {
@@ -1030,11 +1155,32 @@ public class HumanoidAnimationWindow : EditorWindow
                 }
             }
         }
+
+        // Draw hide button
+        if (clipInfo.isHidden)
+        {
+            GUI.color = new Color(1.0f, 0.0f, 0.0f, 0.7f); // Red for hidden
+        }
+        else
+        {
+            GUI.color = new Color(0.6f, 0.6f, 0.6f, 0.7f); // Grey for visible
+        }
+
+        // Draw hide button with eye icon
+        if (GUI.Button(hideRect, new GUIContent("👁")))
+        {
+            clipInfo.isHidden = !clipInfo.isHidden;
+            SaveHiddenItems(); // Save when hidden status changes
+
+            // If we're hiding an item and not showing hidden items, reapply filter to remove it
+            if (clipInfo.isHidden && !showHiddenItems)
+            {
+                ApplySearchFilter();
+            }
+        }
         GUI.color = oldColor;
-        
-      
     }
-    
+
     private void HandleKeyboardInput()
     {
         Event e = Event.current;
