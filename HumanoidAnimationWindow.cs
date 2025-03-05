@@ -2,12 +2,14 @@ using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.IO;
 
 public class HumanoidAnimationWindow : EditorWindow
 {
     private Vector2 scrollPos;
     private string searchQuery = "";
     private AnimationClip selectedClip;
+    private bool cacheNeedsRefresh = false;
 
     // A small helper class to cache information about each clip.
     private class AnimationClipInfo
@@ -26,11 +28,41 @@ public class HumanoidAnimationWindow : EditorWindow
         }
     }
 
+    // Serializable class for disk caching
+    [System.Serializable]
+    private class SerializableClipInfo
+    {
+        public string clipGuid;
+        public string clipName;
+        public string nameNormalized;
+        public string pathNormalized;
+        public string assetPath;
+
+        public SerializableClipInfo(string guid, string name, string normalizedName, string normalizedPath, string assetPath)
+        {
+            this.clipGuid = guid;
+            this.clipName = name;
+            this.nameNormalized = normalizedName;
+            this.pathNormalized = normalizedPath;
+            this.assetPath = assetPath;
+        }
+    }
+
+    // Class to hold all serialized data
+    [System.Serializable]
+    private class CacheData
+    {
+        public List<SerializableClipInfo> clips = new List<SerializableClipInfo>();
+    }
+
     // Static cache of *all* humanoid clips found in the project.
     private static List<AnimationClipInfo> cachedClips = null;
 
     // Filtered list used for display based on search terms.
     private List<AnimationClipInfo> filteredClips = new List<AnimationClipInfo>();
+
+    // Path for cache file
+    private static string CacheFilePath => Path.Combine(Application.dataPath, "../Library/HumanoidAnimationsCache.json");
 
     [MenuItem("Window/Humanoid Animations")]
     public static void ShowWindow()
@@ -41,7 +73,13 @@ public class HumanoidAnimationWindow : EditorWindow
     private void OnEnable()
     {
         EditorApplication.projectChanged += OnProjectChanged;
-        RefreshAnimations();
+
+        // Try to load from cache first, only rebuild if loading fails
+        if (!LoadCacheFromDisk())
+        {
+            RefreshAnimations();
+        }
+
         ApplySearchFilter();
     }
 
@@ -52,22 +90,32 @@ public class HumanoidAnimationWindow : EditorWindow
 
     private void OnProjectChanged()
     {
-        cachedClips = null;
-        RefreshAnimations();
-        ApplySearchFilter();
+        // Instead of rebuilding, set a flag that the cache might be stale
+        cacheNeedsRefresh = true;
         Repaint();
     }
 
     // Force a (re)scan of humanoid clips in the project.
-    private void RefreshAnimations()
+    private void RefreshAnimations(bool forceRebuild = false)
     {
-        // Only rebuild if needed
-        if (cachedClips != null) return;
+        // Only rebuild if needed or forced
+        if (cachedClips != null && !forceRebuild) return;
+
+        EditorUtility.DisplayProgressBar("Scanning Animation Clips", "Building humanoid animations cache...", 0f);
 
         cachedClips = new List<AnimationClipInfo>();
         string[] guids = AssetDatabase.FindAssets("t:AnimationClip");
+
         for (int i = 0; i < guids.Length; i++)
         {
+            // Show progress
+            if (i % 10 == 0)
+            {
+                float progress = (float)i / guids.Length;
+                EditorUtility.DisplayProgressBar("Scanning Animation Clips",
+                    $"Processing clip {i + 1}/{guids.Length}", progress);
+            }
+
             string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
             AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
             if (clip != null)
@@ -92,6 +140,14 @@ public class HumanoidAnimationWindow : EditorWindow
                 }
             }
         }
+
+        EditorUtility.ClearProgressBar();
+
+        // Save to disk after building
+        SaveCacheToDisk();
+
+        // Clear the refresh flag since we've just refreshed
+        cacheNeedsRefresh = false;
     }
 
     private void AddToCache(AnimationClip clip, string assetPath)
@@ -109,6 +165,122 @@ public class HumanoidAnimationWindow : EditorWindow
             pathLower,
             assetPath
         ));
+    }
+
+    // Save cache to disk
+    private void SaveCacheToDisk()
+    {
+        try
+        {
+            CacheData data = new CacheData();
+
+            foreach (var clipInfo in cachedClips)
+            {
+                string guid = AssetDatabase.AssetPathToGUID(clipInfo.assetPath);
+
+                // Only add valid assets to the cache
+                if (!string.IsNullOrEmpty(guid))
+                {
+                    data.clips.Add(new SerializableClipInfo(
+                        guid,
+                        clipInfo.clip.name,
+                        clipInfo.nameNormalized,
+                        clipInfo.pathNormalized,
+                        clipInfo.assetPath
+                    ));
+                }
+            }
+
+            string json = JsonUtility.ToJson(data);
+            File.WriteAllText(CacheFilePath, json);
+            Debug.Log($"Humanoid animations cache saved with {data.clips.Count} clips.");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Error saving humanoid animations cache: {e.Message}");
+        }
+    }
+
+    // Load cache from disk
+    private bool LoadCacheFromDisk()
+    {
+        try
+        {
+            if (!File.Exists(CacheFilePath))
+            {
+                return false;
+            }
+
+            string json = File.ReadAllText(CacheFilePath);
+            CacheData data = JsonUtility.FromJson<CacheData>(json);
+
+            // If no data, return false
+            if (data == null || data.clips == null || data.clips.Count == 0)
+            {
+                return false;
+            }
+
+            List<AnimationClipInfo> loadedClips = new List<AnimationClipInfo>();
+            int loadedCount = 0;
+            int totalCount = data.clips.Count;
+
+            EditorUtility.DisplayProgressBar("Loading Animation Cache",
+                "Loading cached animation clips...", 0f);
+
+            for (int i = 0; i < data.clips.Count; i++)
+            {
+                var serializedInfo = data.clips[i];
+
+                // Show progress every few items
+                if (i % 20 == 0)
+                {
+                    float progress = (float)i / totalCount;
+                    EditorUtility.DisplayProgressBar("Loading Animation Cache",
+                        $"Loading clip {i + 1}/{totalCount}", progress);
+                }
+
+                if (string.IsNullOrEmpty(serializedInfo.clipGuid))
+                    continue;
+
+                string assetPath = AssetDatabase.GUIDToAssetPath(serializedInfo.clipGuid);
+
+                // Skip if the asset no longer exists
+                if (string.IsNullOrEmpty(assetPath))
+                    continue;
+
+                AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
+
+                // Skip if the clip can't be loaded
+                if (clip == null)
+                    continue;
+
+                loadedClips.Add(new AnimationClipInfo(
+                    clip,
+                    serializedInfo.nameNormalized,
+                    serializedInfo.pathNormalized,
+                    assetPath
+                ));
+
+                loadedCount++;
+            }
+
+            EditorUtility.ClearProgressBar();
+
+            if (loadedCount > 0)
+            {
+                cachedClips = loadedClips;
+                Debug.Log($"Humanoid animations loaded from cache: {loadedCount} clips.");
+                return true;
+            }
+
+            return false;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Error loading humanoid animations cache: {e.Message}");
+            EditorUtility.ClearProgressBar();
+            return false;
+        }
     }
 
     // Only re-filter when needed
@@ -147,7 +319,7 @@ public class HumanoidAnimationWindow : EditorWindow
             // For each token, check if it appears in EITHER the normalized clip name or the normalized path
             foreach (string token in tokens)
             {
-                if (!clipInfo.nameNormalized.Contains(token) && 
+                if (!clipInfo.nameNormalized.Contains(token) &&
                     !clipInfo.pathNormalized.Contains(token))
                 {
                     allTokensMatch = false;
@@ -206,6 +378,12 @@ public class HumanoidAnimationWindow : EditorWindow
             }
         }
 
+        // Show a warning if the cache might be stale
+        if (cacheNeedsRefresh)
+        {
+            EditorGUILayout.HelpBox("Project assets have changed. The animation cache might be out of date. Consider refreshing.", MessageType.Warning);
+        }
+
         HandleKeyboardInput();
 
         scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
@@ -231,9 +409,9 @@ public class HumanoidAnimationWindow : EditorWindow
                 // Highlight the currently selected clip with a border
                 if (selectedClip == clipInfo.clip)
                 {
-                    Color highlightColor = Color.yellow;
+                    Color highlightColor = Color.green;
                     float thickness = 20f;
-                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor); 
+                    EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, lineRect.width, thickness), highlightColor);
                     EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y + lineRect.height - thickness, lineRect.width, thickness), highlightColor);
                     EditorGUI.DrawRect(new Rect(lineRect.x, lineRect.y, thickness, lineRect.height), highlightColor);
                     EditorGUI.DrawRect(new Rect(lineRect.x + lineRect.width - thickness, lineRect.y, thickness, lineRect.height), highlightColor);
@@ -264,10 +442,10 @@ public class HumanoidAnimationWindow : EditorWindow
         EditorGUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
 
+        // Changed to force a rebuild when clicked
         if (GUILayout.Button("Refresh", GUILayout.Width(position.width * 0.15f)))
         {
-            cachedClips = null;
-            RefreshAnimations();
+            RefreshAnimations(true); // Force rebuild
             ApplySearchFilter();
         }
         GUILayout.FlexibleSpace();
